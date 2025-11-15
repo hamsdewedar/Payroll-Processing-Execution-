@@ -1,6 +1,6 @@
 import { HREventType } from '../enums/hr-event-type.enum';
 import { PreRunItemType } from '../enums/pre-run-item-type.enum';
-import { PreRunItem } from '../models/pre-run-item.model';
+import { PreRunItem } from '../schemas/payroll-run-item.schema.ts';
 
 // A simple type to describe an employee for our mock data
 export interface DummyEmployee {

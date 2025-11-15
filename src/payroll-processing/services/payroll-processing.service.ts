@@ -1,12 +1,37 @@
 import { Injectable } from '@nestjs/common';
-import { PayrollRun } from '../models/payroll-run.model';
-import { PayrollEmployeeRecord } from '../models/payroll-employee-record.model';
-import { PreRunItem } from '../models/pre-run-item.model';
 import { PayrollStatus } from '../enums/payroll-status.enum';
-import {
-  dummyEmployees,
-  dummyPreRunItems,
-} from '../mocks/dummy-data';
+import { dummyEmployees, dummyPreRunItems } from '../mocks/dummy-data';
+
+// ===== In-memory types (not mongoose) =====
+
+interface PayrollRun {
+  id: string;
+  period: string;
+  status: PayrollStatus;
+  issues: string[];
+  lockedAt?: Date;
+  paidAt?: Date;
+}
+
+interface PayrollEmployeeRecord {
+  id: string;
+  payrollRunId: string;
+  employeeId: string;
+  hrEventType: string;          // or import your enum if you want
+  grossSalary: number;
+  taxes: number;
+  insurance: number;
+  penalties: number;
+  finalSalary: number;
+  signingBonus: number;
+}
+
+interface PreRunItem {
+  employeeId: string;
+  type: string;
+  amount: number;
+  approved: boolean;
+}
 
 @Injectable()
 export class PayrollProcessingService {
