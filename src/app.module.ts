@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
+import { ConfigModule } from '@nestjs/config';
+import { MongooseModule } from '@nestjs/mongoose';
+import {AppController} from './app.controller';
 import { AppService } from './app.service';
-import { PayrollProcessingModule } from './payroll-processing/payroll-processing.module';
+import { PayrollProcessingAndExecutionModule } from './payroll-processing-and-execution/payroll-processing-and-execution.module';
 
 @Module({
-  imports: [PayrollProcessingModule],
+  imports: [PayrollProcessingAndExecutionModule],
   controllers: [AppController],
   providers: [AppService],
 })

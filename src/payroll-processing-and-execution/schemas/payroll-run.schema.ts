@@ -1,3 +1,20 @@
+/*What I recommend you do
+
+Keep your current PayrollRun schema exactly as it is.
+It’s good and aligned with the PDF.
+
+If you like, you can later add some optional totals (not mandatory for Milestone 1):
+
+@Prop({ default: 0 })
+totalEmployees: number;
+
+@Prop({ default: 0 })
+totalGrossAmount: number;
+
+@Prop({ default: 0 })
+totalNetAmount: number;
+*/
+
 // SubSystem: Payroll Processing & Execution
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
