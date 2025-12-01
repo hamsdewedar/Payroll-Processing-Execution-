@@ -2529,10 +2529,16 @@ export class PayrollExecutionService {
         employee,
         allAllowances
       );
-      const applicableAllowances = employeeAllowances.map((allowance: any) => ({
-        ...allowance.toObject ? allowance.toObject() : allowance,
-        _id: allowance._id
-      }));
+      // Additional validation: Ensure only APPROVED allowances are included
+      const applicableAllowances = employeeAllowances
+        .filter((allowance: any) => {
+          const allowanceData = allowance.toObject ? allowance.toObject() : allowance;
+          return allowanceData.status === ConfigStatus.APPROVED;
+        })
+        .map((allowance: any) => ({
+          ...allowance.toObject ? allowance.toObject() : allowance,
+          _id: allowance._id
+        }));
 
       // Get approved signing bonuses for this employee
       const approvedSigningBonuses = await this.employeeSigningBonusModel.find({
@@ -2543,9 +2549,20 @@ export class PayrollExecutionService {
       const signingBonusConfigs: any[] = [];
       for (const bonus of approvedSigningBonuses) {
         if ((bonus as any).signingBonusId) {
-          const config = await this.payrollConfigurationService.findOneSigningBonus((bonus as any).signingBonusId.toString());
-          if (config) {
-            signingBonusConfigs.push(config as any);
+          try {
+            const config = await this.payrollConfigurationService.findOneSigningBonus((bonus as any).signingBonusId.toString());
+            if (config) {
+              const configData = config as any;
+              // Only include APPROVED signing bonus configurations
+              if (configData.status === ConfigStatus.APPROVED) {
+                signingBonusConfigs.push(configData);
+              } else {
+                console.warn(`Signing bonus config ${(bonus as any).signingBonusId} is not APPROVED (status: ${configData.status}). Skipping.`);
+              }
+            }
+          } catch (error) {
+            console.warn(`Error fetching signing bonus config ${(bonus as any).signingBonusId}: ${error.message}`);
+            // Continue with other bonuses even if one fails
           }
         }
       }
@@ -2559,9 +2576,20 @@ export class PayrollExecutionService {
       const terminationBenefitConfigs: any[] = [];
       for (const benefit of approvedBenefits) {
         if ((benefit as any).benefitId) {
-          const config = await this.payrollConfigurationService.findOneTerminationBenefit((benefit as any).benefitId.toString());
-          if (config) {
-            terminationBenefitConfigs.push(config as any);
+          try {
+            const config = await this.payrollConfigurationService.findOneTerminationBenefit((benefit as any).benefitId.toString());
+            if (config) {
+              const configData = config as any;
+              // Only include APPROVED termination benefit configurations
+              if (configData.status === ConfigStatus.APPROVED) {
+                terminationBenefitConfigs.push(configData);
+              } else {
+                console.warn(`Termination benefit config ${(benefit as any).benefitId} is not APPROVED (status: ${configData.status}). Skipping.`);
+              }
+            }
+          } catch (error) {
+            console.warn(`Error fetching termination benefit config ${(benefit as any).benefitId}: ${error.message}`);
+            // Continue with other benefits even if one fails
           }
         }
       }
@@ -2569,6 +2597,7 @@ export class PayrollExecutionService {
       // Get refunds for this employee (pending refunds that were included in this payroll)
       const allRefunds = await this.payrollTrackingService.getRefundsByEmployeeId(employeeId);
       const refundDetailsList: any[] = [];
+      const refundsToProcess: any[] = []; // Track refunds that need to be marked as PAID
       for (const refund of allRefunds) {
         const refundData = refund as any;
         // Include refunds that were paid in this payroll run or are pending
@@ -2579,25 +2608,45 @@ export class PayrollExecutionService {
         if (isPaidInThisRun || (isPending && !refundData.paidInPayrollRunId)) {
           if (refundData.refundDetails) {
             refundDetailsList.push(refundData.refundDetails as any);
+            // Track pending refunds that need to be processed after payslip generation
+            if (isPending && !refundData.paidInPayrollRunId) {
+              refundsToProcess.push(refundData);
+            }
           }
         }
       }
 
-      // Get applicable tax rules (based on baseSalary)
-      const applicableTaxRules = allTaxRules.filter((rule: any) => {
-        return baseSalary >= rule.minAmount && (rule.maxAmount === null || baseSalary <= rule.maxAmount);
-      }).map((rule: any) => ({
-        ...rule.toObject ? rule.toObject() : rule,
-        _id: rule._id
-      }));
+      // Get applicable tax rules
+      // Note: Tax rules schema doesn't have minAmount/maxAmount fields - all approved tax rules apply
+      // Filter to ensure only APPROVED rules are used (additional safety check)
+      const applicableTaxRules = allTaxRules
+        .filter((rule: any) => {
+          const ruleData = rule.toObject ? rule.toObject() : rule;
+          // Ensure rule is APPROVED (additional validation)
+          return ruleData.status === ConfigStatus.APPROVED;
+        })
+        .map((rule: any) => ({
+          ...rule.toObject ? rule.toObject() : rule,
+          _id: rule._id
+        }));
 
       // Get applicable insurance brackets (based on baseSalary)
-      const applicableInsuranceBrackets = allInsuranceBrackets.filter((rule: any) => {
-        return baseSalary >= rule.minAmount && (rule.maxAmount === null || baseSalary <= rule.maxAmount);
-      }).map((rule: any) => ({
-        ...rule.toObject ? rule.toObject() : rule,
-        _id: rule._id
-      }));
+      // Filter by salary range and ensure only APPROVED brackets are used
+      const applicableInsuranceBrackets = allInsuranceBrackets
+        .filter((rule: any) => {
+          const ruleData = rule.toObject ? rule.toObject() : rule;
+          // Ensure bracket is APPROVED (additional validation)
+          if (ruleData.status !== ConfigStatus.APPROVED) {
+            return false;
+          }
+          // Check if baseSalary falls within bracket range
+          return baseSalary >= ruleData.minSalary && 
+                 (ruleData.maxSalary === null || ruleData.maxSalary === undefined || baseSalary <= ruleData.maxSalary);
+        })
+        .map((rule: any) => ({
+          ...rule.toObject ? rule.toObject() : rule,
+          _id: rule._id
+        }));
 
       // Get penalties for this employee
       // Note: Penalties are now calculated via calculatePenaltiesWithBreakdown() which uses TimeManagement and Leaves services
@@ -2616,10 +2665,12 @@ export class PayrollExecutionService {
 
       // Calculate total deductions
       const totalTaxAmount = applicableTaxRules.reduce((sum: number, rule: any) => {
-        return sum + (baseSalary * (rule.percentage || 0) / 100);
+        // Tax rules use 'rate' field (percentage), not 'percentage'
+        return sum + (baseSalary * (rule.rate || 0) / 100);
       }, 0);
       const totalInsuranceAmount = applicableInsuranceBrackets.reduce((sum: number, rule: any) => {
-        return sum + (baseSalary * (rule.percentage || 0) / 100);
+        // Insurance brackets use 'employeeRate' field (percentage), not 'percentage'
+        return sum + (baseSalary * (rule.employeeRate || 0) / 100);
       }, 0);
       const totalPenaltiesAmount = penalties ? ((penalties as any).amount || 0) : 0;
       const totaDeductions = totalTaxAmount + totalInsuranceAmount + totalPenaltiesAmount;
@@ -2648,6 +2699,29 @@ export class PayrollExecutionService {
 
       await payslip.save();
       generatedPayslips.push(payslip as any);
+
+      // Process refunds that were included in this payslip (mark as PAID)
+      // Integration with PayrollTrackingService: Mark refunds as paid after payslip generation
+      for (const refundToProcess of refundsToProcess) {
+        try {
+          await this.payrollTrackingService.processRefund(
+            refundToProcess._id.toString(),
+            {
+              paidInPayrollRunId: payrollRunId,
+            }
+          );
+        } catch (error) {
+          // Log error but don't fail the entire process
+          console.error(`Error processing refund ${refundToProcess._id} for employee ${employeeId}: ${error.message}`);
+          // Flag as exception but continue with other refunds
+          await this.flagPayrollException(
+            payrollRunId,
+            'REFUND_PROCESSING_ERROR',
+            `Failed to process refund ${refundToProcess._id} for employee ${employeeId}: ${error.message}`,
+            employeeId.toString()
+          );
+        }
+      }
 
       // Distribute payslip based on method
       try {
